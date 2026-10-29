@@ -1,80 +1,113 @@
 #!/bin/bash
 
-# Atualizar lista de pacotes
-sudo apt update -y
+# Encerra o script em caso de erro
+set -eo pipefail
 
-# Instalar MariaDB
-sudo apt install mariadb-server -y
+# Verificação de privilégios de superusuário
+if [ "$EUID" -ne 0 ]; then
+    echo "Erro: Execute este script com privilégios de superusuário (sudo)."
+    exit 1
+fi
 
-# Instalar MySQL Workbench
-sudo apt install mysql-workbench -y
+# Obter o usuário real (que executou o sudo)
+REAL_USER=${SUDO_USER:-$USER}
+REAL_HOME=$(getent passwd "$REAL_USER" | cut -d: -f6)
 
-# Instalar Visual Studio Code
-sudo snap install --classic code -y
+echo "==> Iniciando configuração pós-instalação para o usuário: $REAL_USER"
 
-# Instalar NetBeans
-sudo snap install netbeans --classic -y
+# Modo não interativo para instalações de pacotes
+export DEBIAN_FRONTEND=noninteractive
 
-# Instalar Java JDK
-sudo apt install default-jdk -y
+# 1. Atualizar repositórios e sistema
+echo "==> Atualizando lista de pacotes..."
+apt update && apt upgrade -y
 
-# Instalar GRASS GIS
-sudo apt install grass -y
+# 2. Instalar dependências básicas
+apt install -y curl wget gpg software-properties-common ca-certificates
 
-# Instalar PyCharm Professional
-sudo snap install pycharm-professional --classic -y
+# 3. Adicionar repositório oficial do Microsoft Edge (Método Keyring Moderno)
+echo "==> Configurando repositório do Microsoft Edge..."
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /etc/apt/keyrings/microsoft.gpg
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/edge stable main" > /etc/apt/sources.list.d/microsoft-edge.list
 
-# Instalar Google Chrome
-wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-sudo dpkg -i google-chrome-stable_current_amd64.deb
-sudo apt --fix-broken install -y
+# Atualizar índice após adicionar o novo repositório
+apt update
 
-# Instalar Microsoft Edge
-curl https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg
-sudo install -o root -g root -m 644 microsoft.gpg /etc/apt/trusted.gpg.d/
-echo "deb [arch=amd64] https://packages.microsoft.com/repos/edge stable main" | sudo tee /etc/apt/sources.list.d/microsoft-edge-dev.list
-sudo rm microsoft.gpg
-sudo apt update -y
-sudo apt install microsoft-edge-dev -y
+# 4. Instalação em lote de pacotes APT
+echo "==> Instalando pacotes APT..."
+apt install -y \
+    mariadb-server \
+    mysql-workbench \
+    default-jdk \
+    grass \
+    gparted \
+    vim \
+    git \
+    gnome-software gnome-software-plugin-flatpak gnome-software-plugin-snap \
+    kdeconnect \
+    openssh-server \
+    microsoft-edge-stable
 
-# Instalar GParted
-sudo apt install gparted -y
+# 5. Instalação de pacotes SNAP
+echo "==> Instalando pacotes Snap..."
+snap install code --classic
+snap install netbeans --classic
+snap install pycharm-professional --classic
+snap install dbeaver-ce
 
-# Instalar VIM
-sudo apt install vim -y
+# 6. Configuração das Extensões do Firefox via Políticas Corporativas
+echo "==> Configurando extensões do Firefox..."
+FIREFOX_POLICY_DIR="/etc/firefox/policies"
+mkdir -p "$FIREFOX_POLICY_DIR"
 
-# Instalar Git
-sudo apt install git -y
+cat <<'EOF' > "$FIREFOX_POLICY_DIR/policies.json"
+{
+  "policies": {
+    "ExtensionSettings": {
+      "{446900e4-71c2-419f-a6a7-df9c091e268b}": {
+        "installation_mode": "normal_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/bitwarden-password-manager/latest.xpi"
+      },
+      "uBlock0@raymondhill.net": {
+        "installation_mode": "normal_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi"
+      },
+      "@testpilot-containers": {
+        "installation_mode": "normal_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/multi-account-containers/latest.xpi"
+      },
+      "{10381373-1fcf-49b0-b98a-2be8cd1d46b8}": {
+        "installation_mode": "normal_installed",
+        "install_url": "https://addons.mozilla.org/firefox/downloads/latest/malwarebytes/latest.xpi"
+      }
+    }
+  }
+}
+EOF
 
-# Configuração do Git
-git config --global user.name "Seu Nome"
-git config --global user.email "seu_email@example.com"
-git config --list
+# 7. Configuração do Git para o usuário comum
+echo "==> Configurando Git..."
+sudo -u "$REAL_USER" git config --global user.name "Seu Nome"
+sudo -u "$REAL_USER" git config --global user.email "seu_email@example.com"
 
-# Instalar Gnome Software
-sudo apt install gnome-software gnome-software-plugin-flatpak gnome-software-plugin-snap -y
+# 8. Gerenciamento do SSH
+echo "==> Configurando serviço SSH..."
+systemctl enable --now ssh
 
-# Instalar KDE Connect
-sudo apt install kdeconnect -y
+SSH_DIR="$REAL_HOME/.ssh"
+if [ ! -f "$SSH_DIR/id_rsa" ]; then
+    echo "==> Gerando chave SSH RSA de 4096 bits..."
+    sudo -u "$REAL_USER" mkdir -p "$SSH_DIR"
+    sudo -u "$REAL_USER" chmod 700 "$SSH_DIR"
+    sudo -u "$REAL_USER" ssh-keygen -t rsa -b 4096 -C "seu_email@example.com" -f "$SSH_DIR/id_rsa" -N ""
+else
+    echo "==> Uma chave SSH já existe em $SSH_DIR/id_rsa. Mantendo chave atual."
+fi
 
-# Instalar OpenSSH
-sudo apt install openssh-server -y
+# 9. Limpeza final
+echo "==> Efetuando limpeza de pacotes e caches..."
+apt autoremove -y
+apt clean
 
-# Gerar chave SSH
-ssh-keygen -t rsa -b 4096 -C "seu_email@example.com" -f ~/.ssh/id_rsa -N ""
-
-# Verificar status do serviço SSH
-sudo systemctl status ssh
-
-# Iniciar o serviço SSH se necessário
-sudo systemctl start ssh
-
-# Habilitar o SSH para iniciar automaticamente com o sistema
-sudo systemctl enable ssh
-
-# Instalar DuckDuckGo Privacy Essentials no Google Chrome
-google-chrome-stable --install-extension=duckduckgo
-
-# Instalar DuckDuckGo Privacy Essentials no Mozilla Firefox
-firefox -install-global-extension https://addons.mozilla.org/firefox/downloads/file/3555357/duckduckgo_privacy_essentials-2022.10.3-an+fx.xpi
-
+echo "==> Instalação e configuração concluídas com sucesso!"
